@@ -1,7 +1,7 @@
 node_modules/
 bun.lockb
 pnpm-lock.yaml
-dist/
+# dist/ - commented out to include built files for npm install from GitHub
 .DS_Store
 .history/
 opencode.json
