@@ -33,6 +33,12 @@ import {
 import { AccountManager } from "./lib/accounts/index.js";
 import type { ManagedAccount } from "./lib/accounts/index.js";
 import { codexStatus } from "./lib/codex-status.js";
+import {
+  loadPluginConfig,
+  getMaxAccountSwitches,
+  getSwitchOnFirstRateLimit,
+  getSwitchAccountDelayMs,
+} from "./lib/config.js";
 import { prefetchModels } from "./lib/models.js";
 import { SessionBindingStore } from "./lib/session-bindings.js";
 
@@ -70,6 +76,12 @@ const notifiedFallbacks = new Set<string>();
 export const OpenAIAuthPlugin: Plugin = async ({ client }: PluginInput) => {
   const quietMode = process.env.OPENCODE_OPENAI_QUIET === "1";
   const debugMode = process.env.OPENCODE_OPENAI_DEBUG === "1";
+  const pluginConfig = loadPluginConfig();
+  const maxAccountSwitches = getMaxAccountSwitches(pluginConfig);
+  const switchOnFirstRateLimit = getSwitchOnFirstRateLimit(pluginConfig);
+  const switchAccountDelayMs = getSwitchAccountDelayMs(pluginConfig);
+
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
   const showRateLimitToast = async (
     account: ManagedAccount,
@@ -487,11 +499,22 @@ export const OpenAIAuthPlugin: Plugin = async ({ client }: PluginInput) => {
                 );
               } catch {}
             }
-            if (retryCount < accountManager.getAccountCount() - 1) {
+            const accountCount = accountManager.getAccountCount();
+            const canSwitch = maxAccountSwitches === 0 || retryCount < maxAccountSwitches;
+            const hasTriedAll = triedAccountIndices.size >= accountCount;
+            if (canSwitch && !hasTriedAll) {
+              if (!switchOnFirstRateLimit && retryCount === 0) {
+                logDebug(
+                  `[openai-multi-auth] switch_on_first_rate_limit=false, retrying same account ${account.index} once`,
+                );
+                await sleep(switchAccountDelayMs);
+                return executeRequest(account, input, init, retryCount + 1, triedAccountIndices);
+              }
               const nextAccount =
                 await accountManager.getNextAvailableAccountExcluding(triedAccountIndices, model);
               if (nextAccount && nextAccount.index !== account.index) {
                 await showAccountSwitchToast(account, nextAccount);
+                await sleep(switchAccountDelayMs);
                 return executeRequest(nextAccount, input, init, retryCount + 1, triedAccountIndices);
               }
             }
@@ -499,11 +522,17 @@ export const OpenAIAuthPlugin: Plugin = async ({ client }: PluginInput) => {
 
           if (response.status === HTTP_STATUS.UNAUTHORIZED) {
             accountManager.markRefreshFailed(account, "401 Unauthorized");
-            const nextAccount =
-              await accountManager.getNextAvailableAccountExcluding(triedAccountIndices, model);
-            if (nextAccount && nextAccount.index !== account.index) {
-              await showAccountSwitchToast(account, nextAccount);
-              return executeRequest(nextAccount, input, init, retryCount + 1, triedAccountIndices);
+            const accountCount = accountManager.getAccountCount();
+            const canSwitch = maxAccountSwitches === 0 || retryCount < maxAccountSwitches;
+            const hasTriedAll = triedAccountIndices.size >= accountCount;
+            if (canSwitch && !hasTriedAll) {
+              const nextAccount =
+                await accountManager.getNextAvailableAccountExcluding(triedAccountIndices, model);
+              if (nextAccount && nextAccount.index !== account.index) {
+                await showAccountSwitchToast(account, nextAccount);
+                await sleep(switchAccountDelayMs);
+                return executeRequest(nextAccount, input, init, retryCount + 1, triedAccountIndices);
+              }
             }
           }
 
@@ -546,19 +575,25 @@ export const OpenAIAuthPlugin: Plugin = async ({ client }: PluginInput) => {
                 }
                 
                 // STEP 1: Try other accounts first (they might be Plus/Pro/Team and support the model)
-                const nextAccount = await accountManager.getNextAvailableAccountExcluding(triedAccountIndices, requestedModel);
-                if (nextAccount) {
-                  if (debugMode) {
-                    console.log(`[openai-multi-auth] Model ${requestedModel} not supported on ${account.email || account.index} [${account.planType}], trying ${nextAccount.email || nextAccount.index} [${nextAccount.planType}]`);
+                const accountCount = accountManager.getAccountCount();
+                const canSwitch = maxAccountSwitches === 0 || retryCount < maxAccountSwitches;
+                const hasTriedAll = triedAccountIndices.size >= accountCount;
+                if (canSwitch && !hasTriedAll) {
+                  const nextAccount = await accountManager.getNextAvailableAccountExcluding(triedAccountIndices, requestedModel);
+                  if (nextAccount) {
+                    if (debugMode) {
+                      console.log(`[openai-multi-auth] Model ${requestedModel} not supported on ${account.email || account.index} [${account.planType}], trying ${nextAccount.email || nextAccount.index} [${nextAccount.planType}]`);
+                    }
+                    await showModelRetryToast(
+                      requestedModel,
+                      account,
+                      nextAccount,
+                      triedAccountIndices.size,
+                      accountCount,
+                    );
+                    await sleep(switchAccountDelayMs);
+                    return executeRequest(nextAccount, input, init, retryCount + 1, triedAccountIndices);
                   }
-                  await showModelRetryToast(
-                    requestedModel,
-                    account,
-                    nextAccount,
-                    triedAccountIndices.size,
-                    accountManager.getAccountCount(),
-                  );
-                  return executeRequest(nextAccount, input, init, retryCount, triedAccountIndices);
                 }
                 
                 // STEP 2: All accounts tried - fall back to older model

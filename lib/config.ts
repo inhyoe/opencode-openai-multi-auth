@@ -11,6 +11,9 @@ const CONFIG_PATH = join(homedir(), ".opencode", "openai-codex-auth-config.json"
  */
 const DEFAULT_CONFIG: PluginConfig = {
 	codexMode: true,
+	max_account_switches: 0,
+	switch_on_first_rate_limit: true,
+	switch_account_delay_ms: 500,
 };
 
 /**
@@ -57,4 +60,40 @@ export function getCodexMode(pluginConfig: PluginConfig): boolean {
 
 	// Use config setting (defaults to true)
 	return pluginConfig.codexMode ?? true;
+}
+
+/**
+ * Get the maximum number of account switches allowed.
+ * 0 means unlimited (all accounts will be tried).
+ * Priority: environment variable > config file > default (0)
+ */
+export function getMaxAccountSwitches(pluginConfig: PluginConfig): number {
+	if (process.env.OPENCODE_OPENAI_MAX_ACCOUNT_SWITCHES !== undefined) {
+		const parsed = parseInt(process.env.OPENCODE_OPENAI_MAX_ACCOUNT_SWITCHES, 10);
+		return Number.isNaN(parsed) ? 0 : Math.max(0, parsed);
+	}
+	return pluginConfig.max_account_switches ?? 0;
+}
+
+/**
+ * Whether to switch accounts on the first 429 response.
+ * Priority: environment variable > config file > default (true)
+ */
+export function getSwitchOnFirstRateLimit(pluginConfig: PluginConfig): boolean {
+	if (process.env.OPENCODE_OPENAI_SWITCH_ON_FIRST_RATE_LIMIT !== undefined) {
+		return process.env.OPENCODE_OPENAI_SWITCH_ON_FIRST_RATE_LIMIT === "1";
+	}
+	return pluginConfig.switch_on_first_rate_limit ?? true;
+}
+
+/**
+ * Delay in milliseconds before switching accounts.
+ * Priority: environment variable > config file > default (500)
+ */
+export function getSwitchAccountDelayMs(pluginConfig: PluginConfig): number {
+	if (process.env.OPENCODE_OPENAI_SWITCH_ACCOUNT_DELAY_MS !== undefined) {
+		const parsed = parseInt(process.env.OPENCODE_OPENAI_SWITCH_ACCOUNT_DELAY_MS, 10);
+		return Number.isNaN(parsed) ? 500 : Math.max(0, parsed);
+	}
+	return pluginConfig.switch_account_delay_ms ?? 500;
 }

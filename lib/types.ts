@@ -9,6 +9,23 @@ export interface PluginConfig {
 	 * @default true
 	 */
 	codexMode?: boolean;
+	/**
+	 * Maximum number of account switches allowed during a single request.
+	 * Set to 0 for unlimited switches (all accounts will be tried).
+	 * @default 0
+	 */
+	max_account_switches?: number;
+	/**
+	 * Whether to switch accounts on the first 429 rate limit response.
+	 * If false, will retry the same account once before switching.
+	 * @default true
+	 */
+	switch_on_first_rate_limit?: boolean;
+	/**
+	 * Delay in milliseconds before switching to the next account.
+	 * @default 500
+	 */
+	switch_account_delay_ms?: number;
 }
 
 /**
